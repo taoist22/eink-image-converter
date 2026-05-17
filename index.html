@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E-ink Image Converter</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f5f5f3; --surface: #fff; --border: #ddd; --border2: #bbb;
+  --text: #1a1a1a; --muted: #666; --accent: #3b82f6; --danger: #ef4444;
+  --r: 8px; --rl: 12px;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; color: var(--text); background: var(--bg); min-height: 100vh; }
+.container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+h1 { font-size: 20px; font-weight: 500; margin-bottom: 4px; }
+.subtitle { font-size: 13px; color: var(--muted); margin-bottom: 1.5rem; }
+.layout { display: grid; grid-template-columns: 1fr 300px; gap: 1.25rem; align-items: start; }
+@media (max-width: 700px) { .layout { grid-template-columns: 1fr; } }
+
+.drop-zone { background: var(--surface); border: 1.5px dashed var(--border2); border-radius: var(--rl); padding: 3rem 1rem; text-align: center; cursor: pointer; transition: background 0.15s; }
+.drop-zone:hover, .drop-zone.drag-over { background: #f0f0ee; border-color: var(--accent); }
+.drop-zone input { display: none; }
+.drop-zone p { color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+.drop-zone p strong { color: var(--text); }
+.browse-btn { display: inline-block; padding: 9px 18px; background: var(--bg); border: 0.5px solid var(--border2); border-radius: var(--r); font-size: 14px; cursor: pointer; }
+
+.preview-area { display: none; background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--rl); overflow: hidden; }
+.preview-area.active { display: block; }
+.preview-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 0.5px solid var(--border); }
+.file-info { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 12px; }
+.header-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.icon-btn { width: 34px; height: 34px; background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--r); color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.icon-btn:hover { border-color: var(--border2); color: var(--text); }
+.icon-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.preview-container { padding: 20px; display: flex; align-items: center; justify-content: center; min-height: 280px; background: repeating-conic-gradient(#e8e8e6 0% 25%, var(--surface) 0% 50%) 50% / 14px 14px; }
+.preview-image-wrapper { position: relative; display: inline-flex; }
+.preview-image-wrapper img { max-width: 100%; max-height: 420px; object-fit: contain; display: block; }
+
+.crop-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: none; }
+.crop-overlay.active { display: block; }
+.crop-mask { position: absolute; background: rgba(0,0,0,0.55); pointer-events: none; }
+.crop-box { position: absolute; border: 2px solid var(--accent); cursor: move; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); }
+.crop-box::before { content: ''; position: absolute; top: 33.33%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.35); }
+.crop-box::after { content: ''; position: absolute; top: 66.66%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.35); }
+.crop-vline { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.35); pointer-events: none; }
+.crop-handle { position: absolute; width: 18px; height: 18px; background: var(--accent); border: 2px solid #fff; border-radius: 50%; transform: translate(-50%,-50%); box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+.crop-handle[data-h="nw"]{top:0;left:0;cursor:nw-resize;}
+.crop-handle[data-h="n"]{top:0;left:50%;cursor:n-resize;}
+.crop-handle[data-h="ne"]{top:0;left:100%;cursor:ne-resize;}
+.crop-handle[data-h="w"]{top:50%;left:0;cursor:w-resize;}
+.crop-handle[data-h="e"]{top:50%;left:100%;cursor:e-resize;}
+.crop-handle[data-h="sw"]{top:100%;left:0;cursor:sw-resize;}
+.crop-handle[data-h="s"]{top:100%;left:50%;cursor:s-resize;}
+.crop-handle[data-h="se"]{top:100%;left:100%;cursor:se-resize;}
+
+.crop-toolbar { display: none; align-items: center; justify-content: space-between; padding: 10px 16px; border-top: 0.5px solid var(--border); background: #f9f9f7; flex-wrap: wrap; gap: 8px; }
+.crop-toolbar.active { display: flex; }
+.crop-lock { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.crop-lock input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.crop-actions { display: flex; gap: 7px; }
+.crop-btn-sm { padding: 7px 14px; border-radius: var(--r); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+.crop-cancel { background: transparent; border: 0.5px solid var(--border2); color: var(--muted); }
+.crop-cancel:hover { color: var(--text); }
+.crop-reset { background: transparent; border: 0.5px solid var(--danger); color: var(--danger); }
+.crop-reset:hover { background: var(--danger); color: #fff; }
+.crop-apply { background: var(--accent); border: none; color: #fff; }
+.crop-apply:hover { background: #2563eb; }
+
+.settings { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--rl); padding: 1.25rem; }
+.section { margin-bottom: 1.25rem; }
+.section:last-child { margin-bottom: 0; }
+.section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 10px; }
+.option-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.opt { padding: 7px 12px; background: #f5f5f3; border: 0.5px solid var(--border2); border-radius: var(--r); font-size: 13px; color: var(--muted); cursor: pointer; transition: all 0.15s; }
+.opt:hover { color: var(--text); border-color: #999; }
+.opt.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.align-grid { display: grid; grid-template-columns: repeat(3, 32px); gap: 3px; }
+.align-btn { width: 32px; height: 32px; background: #f5f5f3; border: 0.5px solid var(--border2); border-radius: 4px; cursor: pointer; position: relative; transition: all 0.15s; }
+.align-btn::after { content: ''; position: absolute; width: 7px; height: 7px; background: var(--muted); border-radius: 2px; }
+.align-btn:hover::after { background: var(--text); }
+.align-btn.active { background: var(--accent); border-color: var(--accent); }
+.align-btn.active::after { background: #fff; }
+.align-btn[data-a="top-left"]::after{top:5px;left:5px;}
+.align-btn[data-a="top-center"]::after{top:5px;left:50%;transform:translateX(-50%);}
+.align-btn[data-a="top-right"]::after{top:5px;right:5px;}
+.align-btn[data-a="center-left"]::after{top:50%;left:5px;transform:translateY(-50%);}
+.align-btn[data-a="center-center"]::after{top:50%;left:50%;transform:translate(-50%,-50%);}
+.align-btn[data-a="center-right"]::after{top:50%;right:5px;transform:translateY(-50%);}
+.align-btn[data-a="bottom-left"]::after{bottom:5px;left:5px;}
+.align-btn[data-a="bottom-center"]::after{bottom:5px;left:50%;transform:translateX(-50%);}
+.align-btn[data-a="bottom-right"]::after{bottom:5px;right:5px;}
+
+.toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 14px; }
+.toggle-row:last-child { margin-bottom: 0; }
+.toggle { width: 42px; height: 23px; background: #ddd; border-radius: 12px; cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0; }
+.toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; background: #fff; border-radius: 50%; transition: left 0.2s; }
+.toggle.on { background: var(--accent); }
+.toggle.on::after { left: 22px; }
+
+.color-row { display: flex; align-items: center; gap: 10px; }
+.color-swatch { width: 34px; height: 34px; border-radius: var(--r); border: 0.5px solid var(--border2); overflow: hidden; cursor: pointer; flex-shrink: 0; }
+.color-swatch input { width: 56px; height: 56px; border: none; margin: -11px; cursor: pointer; }
+.color-hex { font-size: 13px; color: var(--muted); font-family: monospace; }
+
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-row input[type=range] { flex: 1; }
+.slider-val { font-size: 13px; color: var(--muted); min-width: 28px; text-align: right; }
+
+.size-inputs { display: flex; align-items: flex-end; gap: 6px; margin-top: 10px; }
+.size-field { flex: 1; min-width: 0; }
+.size-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.size-input { width: 100%; padding: 7px 8px; border: 0.5px solid var(--border2); border-radius: var(--r); font-size: 13px; color: var(--text); background: var(--surface); }
+.size-input:focus { outline: none; border-color: var(--accent); }
+.device-select { width: 100%; padding: 7px 10px; border: 0.5px solid var(--border2); border-radius: var(--r); font-size: 13px; color: var(--text); background: var(--surface); cursor: pointer; }
+.device-select:focus { outline: none; border-color: var(--accent); }
+
+.bg-blur-section { display: none; }
+
+.convert-btn { width: 100%; margin-top: 1.25rem; padding: 12px; background: var(--accent); color: #fff; border: none; border-radius: var(--r); font-size: 15px; font-weight: 500; cursor: pointer; transition: background 0.15s; }
+.convert-btn:hover { background: #2563eb; }
+.convert-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+canvas { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>E-ink Image Converter</h1>
+  <p class="subtitle">Convert images to PNG for any e-ink device · Images are processed entirely in your browser and never uploaded anywhere</p>
+  <div class="layout">
+    <div>
+      <div class="drop-zone" id="drop-zone">
+        <input type="file" id="file-input" accept="image/*">
+        <p><strong>Drop an image here</strong> or click to browse</p>
+        <p style="margin-bottom:16px;font-size:12px;">JPEG, PNG, HEIC, WebP — any size</p>
+        <span class="browse-btn">Choose File</span>
+      </div>
+      <div class="preview-area" id="preview-area">
+        <div class="preview-header">
+          <div class="file-info" id="file-info">image.jpg</div>
+          <div class="header-actions">
+            <button class="icon-btn" id="crop-btn" title="Crop">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2v4M18 2v4M6 18v4M18 18v4M2 6h4M2 18h4M18 6h4M18 18h4M6 6h12v12H6z"/></svg>
+            </button>
+            <button class="icon-btn" id="rotate-ccw" title="Rotate CCW">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38"/></svg>
+            </button>
+            <button class="icon-btn" id="rotate-cw" title="Rotate CW">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>
+            </button>
+            <button class="icon-btn" id="clear-btn" title="Remove">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="preview-container">
+          <div class="preview-image-wrapper" id="img-wrapper">
+            <img id="preview-img" src="" alt="Preview">
+            <div class="crop-overlay" id="crop-overlay">
+              <div class="crop-mask" id="mask-top"></div>
+              <div class="crop-mask" id="mask-left"></div>
+              <div class="crop-mask" id="mask-right"></div>
+              <div class="crop-mask" id="mask-bottom"></div>
+              <div class="crop-box" id="crop-box">
+                <div class="crop-vline" style="left:33.33%"></div>
+                <div class="crop-vline" style="left:66.66%"></div>
+                <div class="crop-handle" data-h="nw"></div>
+                <div class="crop-handle" data-h="n"></div>
+                <div class="crop-handle" data-h="ne"></div>
+                <div class="crop-handle" data-h="w"></div>
+                <div class="crop-handle" data-h="e"></div>
+                <div class="crop-handle" data-h="sw"></div>
+                <div class="crop-handle" data-h="s"></div>
+                <div class="crop-handle" data-h="se"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="crop-toolbar" id="crop-toolbar">
+          <label class="crop-lock">
+            <input type="checkbox" id="lock-ratio" checked>
+            Lock to output ratio
+          </label>
+          <div class="crop-actions">
+            <button class="crop-btn-sm crop-reset" id="crop-reset">Reset</button>
+            <button class="crop-btn-sm crop-cancel" id="crop-cancel">Cancel</button>
+            <button class="crop-btn-sm crop-apply" id="crop-apply">Apply Crop</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="settings">
+      <div class="section">
+        <div class="section-title">Output Size</div>
+        <select class="device-select" id="device-preset">
+          <option value="480x800">Xteink X4 — 480 × 800</option>
+          <option value="824x1648">Boox Palma 2 — 824 × 1,648</option>
+          <option value="1404x1872" selected>Nomad / A6 X / reMarkable 2 / Kobo Elipsa — 1,404 × 1,872</option>
+          <option value="1860x2480">Kindle Scribe — 1,860 × 2,480</option>
+          <option value="2480x1860">Boox Go 10.3 — 2,480 × 1,860</option>
+          <option value="1920x2560">Supernote Manta — 1,920 × 2,560</option>
+          <option value="2160x2880">reMarkable Paper Pro — 2,160 × 2,880</option>
+          <option value="custom">Custom</option>
+        </select>
+        <div class="size-inputs">
+          <div class="size-field">
+            <div class="size-label">Width (px)</div>
+            <input type="number" class="size-input" id="out-width" value="1404" min="1" max="9999">
+          </div>
+          <button class="icon-btn active" id="lock-output-ratio" title="Lock aspect ratio" style="margin-bottom:1px;flex-shrink:0;">
+            <svg id="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </button>
+          <div class="size-field">
+            <div class="size-label">Height (px)</div>
+            <input type="number" class="size-input" id="out-height" value="1872" min="1" max="9999">
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Fit Mode</div>
+        <div class="option-group" id="fit-opts">
+          <button class="opt" data-fit="fill">Fill</button>
+          <button class="opt active" data-fit="fit">Fit</button>
+          <button class="opt" data-fit="stretch">Stretch</button>
+          <button class="opt" data-fit="blur">Blur extend</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Alignment</div>
+        <div class="align-grid" id="align-grid">
+          <button class="align-btn" data-a="top-left"></button>
+          <button class="align-btn" data-a="top-center"></button>
+          <button class="align-btn" data-a="top-right"></button>
+          <button class="align-btn" data-a="center-left"></button>
+          <button class="align-btn active" data-a="center-center"></button>
+          <button class="align-btn" data-a="center-right"></button>
+          <button class="align-btn" data-a="bottom-left"></button>
+          <button class="align-btn" data-a="bottom-center"></button>
+          <button class="align-btn" data-a="bottom-right"></button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Background Fill</div>
+        <div id="bg-color-section">
+          <div class="color-row">
+            <div class="color-swatch"><input type="color" id="bg-color" value="#000000"></div>
+            <span class="color-hex" id="color-hex">#000000</span>
+          </div>
+        </div>
+        <div class="bg-blur-section" id="bg-blur-section">
+          <div class="slider-row">
+            <input type="range" id="blur-radius" min="10" max="120" value="60" step="5">
+            <span class="slider-val" id="blur-val">60</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:6px;">Blur radius — higher = smoother blend</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Color Depth</div>
+        <div class="option-group" id="depth-opts">
+          <button class="opt active" data-depth="256">8-bit</button>
+          <button class="opt" data-depth="16">4-bit</button>
+          <button class="opt" data-depth="2">1-bit</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Brightness</div>
+        <div class="slider-row">
+          <input type="range" id="brightness" min="-80" max="80" value="0" step="1">
+          <span class="slider-val" id="brightness-val">0</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Contrast</div>
+        <div class="slider-row">
+          <input type="range" id="contrast" min="-50" max="50" value="0" step="1">
+          <span class="slider-val" id="contrast-val">0</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Effects</div>
+        <div class="toggle-row"><span>Grayscale</span><div class="toggle on" id="tog-gray"></div></div>
+        <div class="toggle-row"><span>Invert Colors</span><div class="toggle" id="tog-invert"></div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Output Filename</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <input type="text" id="out-filename" placeholder="filename" style="flex:1;padding:8px 10px;border:0.5px solid var(--border2);border-radius:var(--r);font-size:13px;color:var(--text);background:var(--surface);">
+          <span style="font-size:13px;color:var(--muted);flex-shrink:0;">.png</span>
+        </div>
+      </div>
+
+      <button class="convert-btn" id="convert-btn" disabled>Download PNG</button>
+    </aside>
+  </div>
+  <footer style="margin-top:2rem;padding-top:1.25rem;border-top:0.5px solid var(--border);text-align:center;font-size:13px;color:var(--muted);">
+    Built for e-ink devices · Inspired by <a href="https://jakegreen.dev" target="_blank" style="color:var(--text);text-decoration:none;font-weight:500;">Jake Green's X4 Wallpaper Converter</a>
+  </footer>
+</div>
+<canvas id="canvas"></canvas>
+<canvas id="blur-canvas"></canvas>
+<script>
+let origImg=null, rotation=0, cropData=null, origFilename='eink-image';
+let cropMode=false, cropState={x:0,y:0,w:1,h:1};
+let dragging=false, resizing=false, activeHandle=null;
+let dragStart={x:0,y:0}, cropStart={x:0,y:0,w:0,h:0};
+let outputRatioLocked=true, lockedRatio=1872/1404;
+const S={fit:'fit',align:'center-center',bg:'#000000',depth:256,brightness:0,contrast:0,gray:true,invert:false,blurRadius:60};
+const $=id=>document.getElementById(id);
+const canvas=$('canvas'), ctx=canvas.getContext('2d');
+const blurCanvas=$('blur-canvas'), blurCtx=blurCanvas.getContext('2d');
+
+function getOutputSize(){
+  return {w:Math.max(1,parseInt($('out-width').value)||1404), h:Math.max(1,parseInt($('out-height').value)||1872)};
+}
+
+$('drop-zone').addEventListener('click',()=>$('file-input').click());
+$('drop-zone').addEventListener('dragover',e=>{e.preventDefault();e.currentTarget.classList.add('drag-over');});
+$('drop-zone').addEventListener('dragleave',e=>e.currentTarget.classList.remove('drag-over'));
+$('drop-zone').addEventListener('drop',e=>{e.preventDefault();e.currentTarget.classList.remove('drag-over');loadFile(e.dataTransfer.files[0]);});
+$('file-input').addEventListener('change',e=>loadFile(e.target.files[0]));
+
+function loadFile(f){
+  if(!f||!f.type.startsWith('image/'))return;
+  origFilename=f.name.replace(/\.[^.]+$/,'');
+  const fnField=$('out-filename'); if(fnField)fnField.value=origFilename;
+  const img=new Image();
+  img.onload=()=>{
+    origImg=img; cropData=null; rotation=0;
+    $('file-info').textContent=f.name;
+    $('drop-zone').style.display='none';
+    $('preview-area').classList.add('active');
+    $('convert-btn').disabled=false;
+    renderPreview();
+  };
+  img.src=URL.createObjectURL(f);
+}
+
+$('clear-btn').addEventListener('click',()=>{
+  origImg=null; cropData=null; rotation=0;
+  $('drop-zone').style.display='';
+  $('preview-area').classList.remove('active');
+  $('convert-btn').disabled=true;
+  exitCrop();
+});
+
+$('device-preset').addEventListener('change',e=>{
+  const val=e.target.value;
+  if(val==='custom')return;
+  const [w,h]=val.split('x').map(Number);
+  $('out-width').value=w;
+  $('out-height').value=h;
+  lockedRatio=h/w;
+  if(origImg)renderPreview();
+});
+
+$('lock-output-ratio').addEventListener('click',()=>{
+  outputRatioLocked=!outputRatioLocked;
+  if(outputRatioLocked){const{w,h}=getOutputSize(); lockedRatio=h/w;}
+  $('lock-output-ratio').classList.toggle('active',outputRatioLocked);
+  $('lock-icon').innerHTML=outputRatioLocked
+    ?'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
+    :'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>';
+});
+
+$('out-width').addEventListener('input',()=>{
+  $('device-preset').value='custom';
+  if(outputRatioLocked){const w=parseInt($('out-width').value); if(w>0)$('out-height').value=Math.round(w*lockedRatio);}
+  if(origImg)renderPreview();
+});
+$('out-height').addEventListener('input',()=>{
+  $('device-preset').value='custom';
+  if(outputRatioLocked){const h=parseInt($('out-height').value); if(h>0)$('out-width').value=Math.round(h/lockedRatio);}
+  if(origImg)renderPreview();
+});
+
+document.querySelectorAll('#fit-opts .opt').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#fit-opts .opt').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); S.fit=b.dataset.fit;
+  const isBlur=S.fit==='blur';
+  $('bg-color-section').style.display=isBlur?'none':'';
+  $('bg-blur-section').style.display=isBlur?'':'none';
+  renderPreview();
+}));
+
+document.querySelectorAll('#align-grid .align-btn').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#align-grid .align-btn').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); S.align=b.dataset.a; renderPreview();
+}));
+
+document.querySelectorAll('#depth-opts .opt').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#depth-opts .opt').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); S.depth=parseInt(b.dataset.depth); renderPreview();
+}));
+
+$('bg-color').addEventListener('input',e=>{S.bg=e.target.value; $('color-hex').textContent=e.target.value.toUpperCase(); renderPreview();});
+$('blur-radius').addEventListener('input',e=>{S.blurRadius=parseInt(e.target.value); $('blur-val').textContent=e.target.value; renderPreview();});
+$('brightness').addEventListener('input',e=>{S.brightness=parseInt(e.target.value); $('brightness-val').textContent=e.target.value; renderPreview();});
+$('contrast').addEventListener('input',e=>{S.contrast=parseInt(e.target.value); $('contrast-val').textContent=e.target.value; renderPreview();});
+
+['tog-gray','tog-invert'].forEach((id,i)=>{
+  $(id).addEventListener('click',()=>{
+    $(id).classList.toggle('on');
+    if(i===0)S.gray=$(id).classList.contains('on');
+    else S.invert=$(id).classList.contains('on');
+    renderPreview();
+  });
+});
+
+$('rotate-ccw').addEventListener('click',()=>{rotation=(rotation-90+360)%360; renderPreview();});
+$('rotate-cw').addEventListener('click',()=>{rotation=(rotation+90)%360; renderPreview();});
+$('crop-btn').addEventListener('click',()=>cropMode?exitCrop():enterCrop());
+$('crop-cancel').addEventListener('click',exitCrop);
+$('crop-reset').addEventListener('click',()=>{cropData=null; exitCrop(); renderPreview();});
+$('crop-apply').addEventListener('click',()=>{cropData={...cropState}; exitCrop(); renderPreview();});
+
+function enterCrop(){
+  if(!origImg)return;
+  const{w:TW,h:TH}=getOutputSize();
+  cropMode=true;
+  $('crop-btn').classList.add('active');
+  $('crop-toolbar').classList.add('active');
+  $('preview-img').src=origImg.src;
+  const isRot=rotation===90||rotation===270;
+  const effW=isRot?origImg.naturalHeight:origImg.naturalWidth;
+  const effH=isRot?origImg.naturalWidth:origImg.naturalHeight;
+  if(cropData){cropState={...cropData};}
+  else if($('lock-ratio').checked&&Math.abs(TW/TH-effW/effH)>0.01){
+    if(effW/effH>TW/TH){const cw=(TW/TH)/(effW/effH);cropState={x:(1-cw)/2,y:0,w:cw,h:1};}
+    else{const ch=(effW/effH)/(TW/TH);cropState={x:0,y:(1-ch)/2,w:1,h:ch};}
+  } else{cropState={x:0,y:0,w:1,h:1};}
+  setTimeout(updateOverlay,50);
+  $('crop-overlay').classList.add('active');
+}
+
+function exitCrop(){
+  cropMode=false;
+  $('crop-btn').classList.remove('active');
+  $('crop-toolbar').classList.remove('active');
+  $('crop-overlay').classList.remove('active');
+  renderPreview();
+}
+
+function updateOverlay(){
+  const img=$('preview-img');
+  const ir=img.getBoundingClientRect(), wr=$('img-wrapper').getBoundingClientRect();
+  const il=ir.left-wr.left, it=ir.top-wr.top, iw=ir.width, ih=ir.height;
+  const bl=il+cropState.x*iw, bt=it+cropState.y*ih, bw=cropState.w*iw, bh=cropState.h*ih;
+  $('crop-box').style.cssText=`left:${bl}px;top:${bt}px;width:${bw}px;height:${bh}px;`;
+  $('mask-top').style.cssText=`left:${il}px;top:${it}px;width:${iw}px;height:${cropState.y*ih}px`;
+  $('mask-left').style.cssText=`left:${il}px;top:${it+cropState.y*ih}px;width:${cropState.x*iw}px;height:${cropState.h*ih}px`;
+  $('mask-right').style.cssText=`left:${il+(cropState.x+cropState.w)*iw}px;top:${it+cropState.y*ih}px;width:${(1-cropState.x-cropState.w)*iw}px;height:${cropState.h*ih}px`;
+  $('mask-bottom').style.cssText=`left:${il}px;top:${it+(cropState.y+cropState.h)*ih}px;width:${iw}px;height:${(1-cropState.y-cropState.h)*ih}px`;
+}
+
+$('crop-box').addEventListener('mousedown',e=>{
+  if(e.target.classList.contains('crop-handle'))return;
+  dragging=true; dragStart={x:e.clientX,y:e.clientY}; cropStart={...cropState}; e.preventDefault();
+});
+document.querySelectorAll('.crop-handle').forEach(h=>h.addEventListener('mousedown',e=>{
+  resizing=true; activeHandle=h.dataset.h; dragStart={x:e.clientX,y:e.clientY}; cropStart={...cropState}; e.preventDefault(); e.stopPropagation();
+}));
+document.addEventListener('mousemove',e=>{
+  if(!cropMode||(!dragging&&!resizing))return;
+  const img=$('preview-img'), r=img.getBoundingClientRect();
+  const dx=(e.clientX-dragStart.x)/r.width, dy=(e.clientY-dragStart.y)/r.height;
+  if(dragging){cropState.x=cl(0,1-cropState.w,cropStart.x+dx); cropState.y=cl(0,1-cropState.h,cropStart.y+dy);}
+  else doResize(dx,dy);
+  updateOverlay();
+});
+document.addEventListener('mouseup',()=>{dragging=false; resizing=false; activeHandle=null;});
+
+$('crop-box').addEventListener('touchstart',e=>{
+  if(e.target.classList.contains('crop-handle'))return;
+  const t=e.touches[0]; dragging=true; dragStart={x:t.clientX,y:t.clientY}; cropStart={...cropState}; e.preventDefault();
+},{passive:false});
+document.querySelectorAll('.crop-handle').forEach(h=>h.addEventListener('touchstart',e=>{
+  const t=e.touches[0]; resizing=true; activeHandle=h.dataset.h; dragStart={x:t.clientX,y:t.clientY}; cropStart={...cropState}; e.preventDefault(); e.stopPropagation();
+},{passive:false}));
+document.addEventListener('touchmove',e=>{
+  if(!cropMode||(!dragging&&!resizing))return;
+  const t=e.touches[0], img=$('preview-img'), r=img.getBoundingClientRect();
+  const dx=(t.clientX-dragStart.x)/r.width, dy=(t.clientY-dragStart.y)/r.height;
+  if(dragging){cropState.x=cl(0,1-cropState.w,cropStart.x+dx); cropState.y=cl(0,1-cropState.h,cropStart.y+dy);}
+  else doResize(dx,dy);
+  updateOverlay();
+},{passive:false});
+document.addEventListener('touchend',()=>{dragging=false; resizing=false; activeHandle=null;});
+window.addEventListener('resize',()=>{if(cropMode)updateOverlay();});
+
+function cl(mn,mx,v){return Math.max(mn,Math.min(mx,v));}
+
+function doResize(dx,dy){
+  const{w:TW,h:TH}=getOutputSize();
+  const lock=$('lock-ratio').checked;
+  const isRot=rotation===90||rotation===270;
+  const effW=isRot?origImg.naturalHeight:origImg.naturalWidth;
+  const effH=isRot?origImg.naturalWidth:origImg.naturalHeight;
+  const tRatio=(TW/TH)/(effW/effH);
+  const cRatio=lock?tRatio:cropStart.w/cropStart.h;
+  const min=0.05;
+  let{x,y,w,h}=cropStart;
+  switch(activeHandle){
+    case 'se':w=cl(min,1-x,w+dx);h=lock?w/cRatio:cl(min,1-y,h+dy);if(lock)w=h*cRatio;break;
+    case 'sw':w=cl(min,x+w,w-dx);x=cropStart.x+cropStart.w-w;h=lock?w/cRatio:cl(min,1-y,h+dy);if(lock){w=h*cRatio;x=cropStart.x+cropStart.w-w;}break;
+    case 'ne':w=cl(min,1-x,w+dx);h=lock?w/cRatio:cl(min,y+h,h-dy);y=cropStart.y+cropStart.h-h;if(lock){w=h*cRatio;y=cropStart.y+cropStart.h-h;}break;
+    case 'nw':w=cl(min,x+w,w-dx);x=cropStart.x+cropStart.w-w;h=lock?w/cRatio:cl(min,y+h,h-dy);y=cropStart.y+cropStart.h-h;if(lock){w=h*cRatio;x=cropStart.x+cropStart.w-w;y=cropStart.y+cropStart.h-h;}break;
+    case 'n':h=cl(min,y+h,h-dy);y=cropStart.y+cropStart.h-h;if(lock){w=h*cRatio;x=cropStart.x+(cropStart.w-w)/2;}break;
+    case 's':h=cl(min,1-y,h+dy);if(lock){w=h*cRatio;x=cropStart.x+(cropStart.w-w)/2;}break;
+    case 'e':w=cl(min,1-x,w+dx);if(lock){h=w/cRatio;y=cropStart.y+(cropStart.h-h)/2;}break;
+    case 'w':w=cl(min,x+w,w-dx);x=cropStart.x+cropStart.w-w;if(lock){h=w/cRatio;y=cropStart.y+(cropStart.h-h)/2;}break;
+  }
+  x=Math.max(0,Math.min(1-w,x)); y=Math.max(0,Math.min(1-h,y));
+  w=Math.min(1-x,w); h=Math.min(1-y,h);
+  cropState={x,y,w,h};
+}
+
+function stackBlur(ctx,w,h,radius){
+  const passes=3, r=Math.round(radius/passes);
+  for(let p=0;p<passes;p++){boxBlurH(ctx,w,h,r); boxBlurV(ctx,w,h,r);}
+}
+
+function boxBlurH(ctx,w,h,r){
+  const id=ctx.getImageData(0,0,w,h), d=id.data, out=new Uint8ClampedArray(d.length), len=2*r+1;
+  for(let y=0;y<h;y++){
+    let rS=0,gS=0,bS=0;
+    for(let i=-r;i<=r;i++){const xi=Math.max(0,Math.min(w-1,i)),idx=(y*w+xi)*4;rS+=d[idx];gS+=d[idx+1];bS+=d[idx+2];}
+    for(let x=0;x<w;x++){
+      const idx=(y*w+x)*4;
+      out[idx]=rS/len; out[idx+1]=gS/len; out[idx+2]=bS/len; out[idx+3]=d[idx+3];
+      const xOut=Math.max(0,x-r), xIn=Math.min(w-1,x+r+1);
+      const iOut=(y*w+xOut)*4, iIn=(y*w+xIn)*4;
+      rS+=d[iIn]-d[iOut]; gS+=d[iIn+1]-d[iOut+1]; bS+=d[iIn+2]-d[iOut+2];
+    }
+  }
+  ctx.putImageData(new ImageData(out,w,h),0,0);
+}
+
+function boxBlurV(ctx,w,h,r){
+  const id=ctx.getImageData(0,0,w,h), d=id.data, out=new Uint8ClampedArray(d.length), len=2*r+1;
+  for(let x=0;x<w;x++){
+    let rS=0,gS=0,bS=0;
+    for(let i=-r;i<=r;i++){const yi=Math.max(0,Math.min(h-1,i)),idx=(yi*w+x)*4;rS+=d[idx];gS+=d[idx+1];bS+=d[idx+2];}
+    for(let y=0;y<h;y++){
+      const idx=(y*w+x)*4;
+      out[idx]=rS/len; out[idx+1]=gS/len; out[idx+2]=bS/len; out[idx+3]=d[idx+3];
+      const iOut=(Math.max(0,y-r)*w+x)*4, iIn=(Math.min(h-1,y+r+1)*w+x)*4;
+      rS+=d[iIn]-d[iOut]; gS+=d[iIn+1]-d[iOut+1]; bS+=d[iIn+2]-d[iOut+2];
+    }
+  }
+  ctx.putImageData(new ImageData(out,w,h),0,0);
+}
+
+function drawBlurExtend(c,cx,tw,th){
+  c.width=tw; c.height=th;
+  let sx=0,sy=0,sw=origImg.naturalWidth,sh=origImg.naturalHeight;
+  if(cropData){sx=cropData.x*origImg.naturalWidth;sy=cropData.y*origImg.naturalHeight;sw=cropData.w*origImg.naturalWidth;sh=cropData.h*origImg.naturalHeight;}
+  const mainW=Math.round(sw*(th/sh)), xOff=Math.round((tw-mainW)/2);
+  const bgH=Math.round(sh*(tw/sw));
+  const BSCALE=0.15;
+  blurCanvas.width=Math.round(tw*BSCALE); blurCanvas.height=Math.round(th*BSCALE);
+  const bw=blurCanvas.width, bh=blurCanvas.height;
+  blurCtx.drawImage(origImg,sx,sy,sw,sh,0,Math.round((bh-bgH*BSCALE)/2),bw,Math.round(bgH*BSCALE));
+  const bgHScaled=Math.round(bgH*BSCALE), bgYOffset=Math.round((bh-bgHScaled)/2);
+  if(bgYOffset>0){
+    const topSlice=blurCtx.getImageData(0,bgYOffset,bw,1);
+    for(let y=0;y<bgYOffset;y++)blurCtx.putImageData(topSlice,0,y);
+    const botSlice=blurCtx.getImageData(0,bgYOffset+bgHScaled-1,bw,1);
+    for(let y=bgYOffset+bgHScaled;y<bh;y++)blurCtx.putImageData(botSlice,0,y);
+  }
+  stackBlur(blurCtx,bw,bh,Math.round(S.blurRadius*BSCALE*3));
+  cx.drawImage(blurCanvas,0,0,bw,bh,0,0,tw,th);
+  cx.drawImage(origImg,sx,sy,sw,sh,xOff,0,mainW,th);
+}
+
+function draw(c,cx,tw,th){
+  if(S.fit==='blur'){
+    drawBlurExtend(c,cx,tw,th);
+  } else {
+    c.width=tw; c.height=th;
+    cx.fillStyle=S.bg; cx.fillRect(0,0,tw,th);
+    const isRot=rotation===90||rotation===270;
+    let sx=0,sy=0,sw=origImg.naturalWidth,sh=origImg.naturalHeight;
+    if(cropData){sx=cropData.x*origImg.naturalWidth;sy=cropData.y*origImg.naturalHeight;sw=cropData.w*origImg.naturalWidth;sh=cropData.h*origImg.naturalHeight;}
+    const effW=isRot?sh:sw, effH=isRot?sw:sh;
+    const iR=effW/effH, cR=tw/th;
+    let dw,dh,dx=0,dy=0,exsx=sx,exsy=sy,exsw=sw,exsh=sh;
+    if(S.fit==='stretch'){dw=tw;dh=th;}
+    else if(S.fit==='fill'){
+      dw=tw;dh=th;
+      const sf=Math.max(tw/effW,th/effH);
+      const ecw=tw/sf,ech=th/sf;
+      let ecx=(effW-ecw)/2,ecy=(effH-ech)/2;
+      const[va,ha]=S.align.split('-');
+      if(effW>ecw){if(ha==='left')ecx=0;else if(ha==='right')ecx=effW-ecw;}
+      if(effH>ech){if(va==='top')ecy=0;else if(va==='bottom')ecy=effH-ech;}
+      if(isRot){exsx=sx+ecy;exsy=sy+ecx;exsw=ech;exsh=ecw;}
+      else{exsx=sx+ecx;exsy=sy+ecy;exsw=ecw;exsh=ech;}
+    } else {
+      if(iR>cR){dw=tw;dh=tw/iR;}else{dh=th;dw=th*iR;}
+      const[va,ha]=S.align.split('-');
+      if(ha==='center')dx=(tw-dw)/2;else if(ha==='right')dx=tw-dw;
+      if(va==='center')dy=(th-dh)/2;else if(va==='bottom')dy=th-dh;
+    }
+    if(rotation===0){cx.drawImage(origImg,exsx,exsy,exsw,exsh,dx,dy,dw,dh);}
+    else{
+      cx.save();cx.translate(dx+dw/2,dy+dh/2);cx.rotate(rotation*Math.PI/180);
+      if(isRot)cx.drawImage(origImg,exsx,exsy,exsw,exsh,-dh/2,-dw/2,dh,dw);
+      else cx.drawImage(origImg,exsx,exsy,exsw,exsh,-dw/2,-dh/2,dw,dh);
+      cx.restore();
+    }
+  }
+  const id=cx.getImageData(0,0,tw,th), d=id.data;
+  const cf=S.contrast!==0?(259*(S.contrast+255))/(255*(259-S.contrast)):null;
+  const br=S.brightness, lvl=S.depth;
+  for(let i=0;i<d.length;i+=4){
+    let r=d[i],g=d[i+1],b=d[i+2];
+    if(br!==0){r=cb(r+br*2.55);g=cb(g+br*2.55);b=cb(b+br*2.55);}
+    if(cf){r=cb(cf*(r-128)+128);g=cb(cf*(g-128)+128);b=cb(cf*(b-128)+128);}
+    if(S.gray){const gr=0.299*r+0.587*g+0.114*b;r=g=b=gr;}
+    if(S.invert){r=255-r;g=255-g;b=255-b;}
+    if(lvl<256){r=q(r,lvl);g=q(g,lvl);b=q(b,lvl);}
+    d[i]=r;d[i+1]=g;d[i+2]=b;
+  }
+  cx.putImageData(id,0,0);
+}
+
+function cb(v){return Math.max(0,Math.min(255,Math.round(v)));}
+function q(v,l){const s=255/(l-1);return Math.round(Math.round(v/s)*s);}
+
+function renderPreview(){
+  if(!origImg)return;
+  const{w:TW,h:TH}=getOutputSize();
+  const scale=Math.min(0.5,420/TH);
+  draw(canvas,ctx,Math.max(1,Math.round(TW*scale)),Math.max(1,Math.round(TH*scale)));
+  $('preview-img').src=canvas.toDataURL('image/jpeg',0.85);
+}
+
+$('convert-btn').addEventListener('click',()=>{
+  if(!origImg)return;
+  const{w:TW,h:TH}=getOutputSize();
+  draw(canvas,ctx,TW,TH);
+  const link=document.createElement('a');
+  link.download=($('out-filename').value.trim()||origFilename)+'.png';
+  link.href=canvas.toDataURL('image/png');
+  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+});
+</script>
+</body>
+</html>
